@@ -1,0 +1,36 @@
+name: songyuan 6.12.69 - 原厂模块信任修复
+
+on:
+  workflow_dispatch:
+
+# Keep the successful run #6's settings; only opt into stock module trust.
+# No device is flashed and system_dlkm/vendor_dlkm are not replaced.
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build-songyuan:
+    uses: ./.github/workflows/build.yml
+    with:
+      android_version: android16
+      kernel_version: "6.12"
+      sub_level: "69"
+      os_patch_level: "2026-03"
+      revision: r1
+      ksu_variant: SukiSU
+      version: "6.12.69-android16-6-g014ca48a80ee-ab15889839-4k"
+      build_time: "Fri Jul 17 18:06:00 UTC 2026"
+      use_zram: false
+      use_bbg: false
+      use_net_enhance: true
+      use_kpm: "disabled (关闭)"
+      use_rekernel: false
+      cve_2026_43499_patch: false
+      enable_susfs: false
+      supp_op: true
+      droidspaces: "off"
+      droidspaces_ntsync: false
+      skip_incompatible: false
+      artifact_upload_mode: "仅上传 AnyKernel3.zip"
+      stock_gki_profile: songyuan-os4.0.0.10

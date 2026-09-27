@@ -89,6 +89,11 @@ on:
         required: false
         type: boolean
         default: false
+      stock_gki_profile:
+        description: "可选的原厂模块信任配置；仅专用 songyuan 工作流启用"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build-kernel:
@@ -145,6 +150,12 @@ jobs:
 
       - name: 检出代码仓库
         uses: actions/checkout@v7
+
+      - name: 验证 songyuan 原厂模块信任配置
+        if: inputs.stock_gki_profile != ''
+        env:
+          BUILD_INPUTS: ${{ toJSON(inputs) }}
+        run: python3 scripts/songyuan_stock_modules.py validate-inputs
 
       - name: 初始化构建环境
         run: |
@@ -338,6 +349,20 @@ jobs:
             exit 1
           fi
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
+
+      - name: 固定 songyuan 已验证构建的 ACK
+        if: inputs.stock_gki_profile != ''
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -euo pipefail
+          ACK=5db86224e3c427ca56cb943d55a31e39eb7e22f2
+          test -z "$(git -C common status --porcelain)"
+          if ! git -C common cat-file -e "$ACK^{commit}" 2>/dev/null; then
+            git -C common fetch --depth=1 --no-tags aosp "$ACK"
+          fi
+          git -C common checkout --detach "$ACK"
+          test "$(git -C common rev-parse HEAD)" = "$ACK"
+          git -C common log -1 --format='songyuan ACK: %H %s'
 
       - name: 提取实际子版本号
         run: |
@@ -1308,6 +1333,12 @@ jobs:
             fi
           fi
           
+      - name: 添加 songyuan 原厂 GKI 模块可信证书
+        if: inputs.stock_gki_profile != ''
+        run: |
+          python3 scripts/songyuan_stock_modules.py prepare \
+            --kernel-root "$KERNEL_ROOT" --anykernel "$ANYKERNEL3/anykernel.sh"
+
       - name: 编译内核
         id: compile_kernel
         uses: nick-fields/retry@v4
@@ -1485,6 +1516,22 @@ jobs:
           fi
           echo "刷入 AnyKernel3 或任意 boot 镜像时无需再打 KPM 补丁"
 
+      - name: 校验 songyuan 最终 Image 和设备限制
+        if: inputs.stock_gki_profile != ''
+        run: |
+          python3 scripts/songyuan_stock_modules.py verify \
+            --image "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" \
+            --anykernel "$ANYKERNEL3/anykernel.sh" \
+            --report "$GITHUB_WORKSPACE/songyuan-stock-module-trust.json"
+
+      - name: 上传 songyuan 证书校验报告
+        if: inputs.stock_gki_profile != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: songyuan-stock-module-trust-report
+          path: songyuan-stock-module-trust.json
+          if-no-files-found: error
+
       - name: 准备 Boot 镜像
         run: |
           mkdir -p bootimgs
@@ -1595,7 +1642,7 @@ jobs:
         if: inputs.artifact_upload_mode != '上传全部'
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-AnyKernel3
+          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-AnyKernel3${{ inputs.stock_gki_profile != '' && '-songyuan-stocktrust' || '' }}
           path: "AnyKernel3-package/*"
           if-no-files-found: error
           compression-level: 9
