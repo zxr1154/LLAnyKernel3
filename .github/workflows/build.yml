@@ -1337,7 +1337,8 @@ jobs:
         if: inputs.stock_gki_profile != ''
         run: |
           python3 scripts/songyuan_stock_modules.py prepare \
-            --kernel-root "$KERNEL_ROOT" --anykernel "$ANYKERNEL3/anykernel.sh"
+            --kernel-root "$KERNEL_ROOT" --anykernel "$ANYKERNEL3/anykernel.sh" \
+            --profile "${{ inputs.stock_gki_profile }}"
 
       - name: 编译内核
         id: compile_kernel
@@ -1506,7 +1507,12 @@ jobs:
             echo "::error::KPM 补丁未生成 oImage，patch_linux 可能不适配当前内核版本"
             exit 1
           fi
+          if [ "${{ inputs.stock_gki_profile }}" = "songyuan-os4.0.0.10-features" ] && cmp -s ./Image ./oImage; then
+            echo "::error::请求 KPM patched，但修补工具输出与输入完全相同"
+            exit 1
+          fi
           mv -f ./oImage ./Image
+          echo "KPM_IMAGE_PATCHED=true" >> "$GITHUB_ENV"
           echo "已用 kptools 在构建期完成 KPM 修补"
 
           # 用修补后的 Image 重新生成 lz4，保证 boot-lz4 变体同样支持 KPM
@@ -1522,6 +1528,8 @@ jobs:
           python3 scripts/songyuan_stock_modules.py verify \
             --image "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" \
             --anykernel "$ANYKERNEL3/anykernel.sh" \
+            --profile "${{ inputs.stock_gki_profile }}" \
+            --kpm-patched "${KPM_IMAGE_PATCHED:-false}" \
             --report "$GITHUB_WORKSPACE/songyuan-stock-module-trust.json"
 
       - name: 上传 songyuan 证书校验报告
@@ -1642,7 +1650,7 @@ jobs:
         if: inputs.artifact_upload_mode != '上传全部'
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-AnyKernel3${{ inputs.stock_gki_profile != '' && '-songyuan-stocktrust' || '' }}
+          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-AnyKernel3${{ inputs.stock_gki_profile != '' && '-songyuan-stocktrust' || '' }}${{ inputs.stock_gki_profile == 'songyuan-os4.0.0.10-features' && '-features' || '' }}
           path: "AnyKernel3-package/*"
           if-no-files-found: error
           compression-level: 9

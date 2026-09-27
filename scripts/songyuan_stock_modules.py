@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 PROFILE = "songyuan-os4.0.0.10"
+FEATURE_PROFILE = PROFILE + "-features"
 ACK_COMMIT = "5db86224e3c427ca56cb943d55a31e39eb7e22f2"
 KSU_COMMIT = "cf87e3f4ddd3f6e5464d85acf56aaa6950e70841"
 CERT_SHA256 = "70ab438b9b156f333e60643318ca552da661f478614d2b9efee21c1ed7c8e56f"
@@ -34,6 +35,30 @@ BASE_INPUTS = {
     "cve_2026_43499_patch": False, "skip_incompatible": False,
     "artifact_upload_mode": "仅上传 AnyKernel3.zip", "stock_gki_profile": PROFILE,
 }
+FEATURE_INPUTS = {
+    **BASE_INPUTS,
+    "stock_gki_profile": FEATURE_PROFILE,
+    "use_zram": True, "use_bbg": True,
+    "use_kpm": "patched (开启并修补)",
+}
+PROFILES = {PROFILE: BASE_INPUTS, FEATURE_PROFILE: FEATURE_INPUTS}
+FEATURE_CONFIG = {
+    key: "y" for key in (
+        "CONFIG_ZRAM", "CONFIG_ZSMALLOC", "CONFIG_CRYPTO_LZ4K", "CONFIG_CRYPTO_LZ4KD",
+        "CONFIG_CRYPTO_LZ4K_OPLUS", "CONFIG_ZRAM_BACKEND_LZ4K",
+        "CONFIG_ZRAM_BACKEND_LZ4KD", "CONFIG_ZRAM_BACKEND_LZ4K_OPLUS",
+        "CONFIG_BBG", "CONFIG_KPM", "CONFIG_IP_SET",
+        "CONFIG_TCP_CONG_BBR", "CONFIG_DEFAULT_BBR", "CONFIG_NETFILTER_XT_SET",
+    )
+}
+# The user explicitly kept SUSFS OFF and the existing official main commit.
+FEATURE_CONFIG["CONFIG_KSU_SUSFS"] = "n"
+
+
+def profile_inputs(profile):
+    if profile not in PROFILES:
+        raise ValueError(f"Unknown songyuan profile: {profile!r}")
+    return PROFILES[profile]
 
 
 def checked_certificate(path=CERT_PATH):
@@ -49,9 +74,10 @@ def checked_certificate(path=CERT_PATH):
 
 
 def validate_inputs(inputs, config_text):
-    for key, expected in BASE_INPUTS.items():
+    profile = inputs.get("stock_gki_profile")
+    for key, expected in profile_inputs(profile).items():
         if inputs.get(key) != expected:
-            raise ValueError(f"{PROFILE} requires {key}={expected!r}, got {inputs.get(key)!r}")
+            raise ValueError(f"{profile} requires {key}={expected!r}, got {inputs.get(key)!r}")
     config = dict(re.findall(r"^([a-z_]+)=(.*)$", config_text, re.M))
     if config.get("custom", "").strip() != "true" or config.get("sukisu", "").strip() != KSU_COMMIT:
         raise ValueError("config/config must pin the SukiSU commit of the known bootable build")
@@ -137,7 +163,8 @@ def guard_anykernel(source):
     return re.sub(r"^device\.name1=.*$", "device.name1=songyuan", source, flags=re.M)
 
 
-def prepare(kernel_root, anykernel):
+def prepare(kernel_root, anykernel, profile=PROFILE):
+    profile_inputs(profile)
     kernel_root = kernel_root.resolve()
     common = kernel_root / "common"
     head = subprocess.check_output(["git", "-C", str(common), "rev-parse", "HEAD"], text=True).strip()
@@ -147,6 +174,10 @@ def prepare(kernel_root, anykernel):
         ["git", "-C", str(kernel_root / "KernelSU"), "rev-parse", "HEAD"], text=True).strip()
     if ksu != KSU_COMMIT:
         raise ValueError(f"Wrong SukiSU commit: {ksu}; expected {KSU_COMMIT}")
+    if profile == FEATURE_PROFILE:
+        rejects = sorted(str(p.relative_to(common)) for p in common.rglob("*.rej"))
+        if rejects:
+            raise ValueError("Feature patches have unresolved rejects: " + ", ".join(rejects[:10]))
     makefile = (common / "Makefile").read_text()
     for key, value in (("VERSION", "6"), ("PATCHLEVEL", "12"), ("SUBLEVEL", "69")):
         if re.findall(r"^" + key + r"\s*=\s*(\S+)\s*$", makefile, re.M) != [value]:
@@ -185,7 +216,8 @@ def embedded_config(image):
                           gzip.decompress(image[start:end]).decode(), re.M))
 
 
-def verify_image(image):
+def verify_image(image, profile=PROFILE, *, kpm_patched=False):
+    expected_inputs = profile_inputs(profile)
     _, der = checked_certificate()
     if image[56:60] != b"ARM\x64":
         raise ValueError("Expected an uncompressed ARM64 Image")
@@ -200,14 +232,27 @@ def verify_image(image):
         raise ValueError("Kleaf did not select the expected trusted certificate")
     if cfg.get("CONFIG_MODULE_SIG_PROTECT_LIST", '""') == '""':
         raise ValueError("Protected module list is empty")
-    if cfg.get("CONFIG_RFKILL") != "m" or cfg.get("CONFIG_ZRAM") != "m":
-        raise ValueError("Stock RFKILL/ZRAM module configuration changed")
+    if cfg.get("CONFIG_RFKILL") != "m":
+        raise ValueError("Stock RFKILL module configuration changed")
+    if profile == FEATURE_PROFILE:
+        for key, expected in FEATURE_CONFIG.items():
+            if cfg.get(key, "n") != expected:
+                raise ValueError(f"Requested feature configuration missing: {key}={expected}")
+        if "baseband_guard" not in cfg.get("CONFIG_LSM", "").strip('"').split(","):
+            raise ValueError("BBG is not enabled in CONFIG_LSM")
+        if kpm_patched is not True:
+            raise ValueError("KPM patched was requested but the Image patch step was not confirmed")
+    elif cfg.get("CONFIG_ZRAM") != "m" or kpm_patched:
+        raise ValueError("Baseline ZRAM module configuration or KPM state changed")
     if b"Linux version " + RELEASE.encode() + b" " not in image:
         raise ValueError("Unexpected kernel release")
-    return {"profile": PROFILE, "expected_ack_commit": ACK_COMMIT, "expected_sukisu_commit": KSU_COMMIT,
+    return {"profile": profile, "expected_ack_commit": ACK_COMMIT, "expected_sukisu_commit": KSU_COMMIT,
+            "expected_inputs": dict(expected_inputs),
             "image_sha256": hashlib.sha256(image).hexdigest(),
             "stock_certificate_der_sha256": CERT_SHA256, "stock_certificate_embedded": True,
             "module_signature_protection": True, "modversions": True,
+            "kpm_patched_by_workflow": kpm_patched,
+            "feature_config": {k: cfg.get(k, "n") for k in FEATURE_CONFIG} if profile == FEATURE_PROFILE else {},
             "runtime_wifi_and_mobile_data_tested": False}
 
 
@@ -218,21 +263,24 @@ def main():
     p = sub.add_parser("prepare")
     p.add_argument("--kernel-root", required=True, type=Path)
     p.add_argument("--anykernel", required=True, type=Path)
+    p.add_argument("--profile", choices=PROFILES, default=PROFILE)
     v = sub.add_parser("verify")
     v.add_argument("--image", required=True, type=Path)
     v.add_argument("--anykernel", required=True, type=Path)
     v.add_argument("--report", required=True, type=Path)
+    v.add_argument("--profile", choices=PROFILES, default=PROFILE)
+    v.add_argument("--kpm-patched", choices=("true", "false"), default="false")
     args = ap.parse_args()
     if args.command == "validate-inputs":
         validate_inputs(json.loads(os.environ["BUILD_INPUTS"]), (REPO_ROOT / "config/config").read_text())
         print("songyuan build inputs and stock certificate validated")
     elif args.command == "prepare":
-        prepare(args.kernel_root, args.anykernel)
+        prepare(args.kernel_root, args.anykernel, args.profile)
     else:
         ak = args.anykernel.read_text()
         if guard_anykernel(ak) != ak:
             raise ValueError("AnyKernel3 songyuan device guard was not applied")
-        report = verify_image(args.image.read_bytes())
+        report = verify_image(args.image.read_bytes(), args.profile, kpm_patched=args.kpm_patched == "true")
         args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
 

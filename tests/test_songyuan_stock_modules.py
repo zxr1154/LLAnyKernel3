@@ -58,6 +58,12 @@ def synthetic_image(overrides=None, certificate=True):
             + der + b"IKCFG_ST" + gzip.compress(cfg.encode(), mtime=0) + b"IKCFG_ED")
 
 
+def synthetic_feature_image(overrides=None, certificate=True):
+    return synthetic_image({**trust.FEATURE_CONFIG,
+                            "CONFIG_LSM": '"landlock,selinux,baseband_guard"',
+                            **(overrides or {})}, certificate=certificate)
+
+
 class CertificateAndInputsTest(unittest.TestCase):
     def test_certificate_is_the_pinned_public_certificate(self):
         pem, der = trust.checked_certificate()
@@ -94,6 +100,23 @@ class CertificateAndInputsTest(unittest.TestCase):
     def test_unpinned_ksu_rejected(self):
         with self.assertRaisesRegex(ValueError, "SukiSU"):
             trust.validate_inputs(trust.BASE_INPUTS, "custom=false\nsukisu=\n")
+
+    def test_screenshot_profile_is_separate_and_exact(self):
+        trust.validate_inputs(trust.FEATURE_INPUTS, f"custom=true\nsukisu={trust.KSU_COMMIT}\n")
+        changes = {k: v for k, v in trust.FEATURE_INPUTS.items() if trust.BASE_INPUTS[k] != v}
+        self.assertEqual(changes, {
+            "stock_gki_profile": trust.FEATURE_PROFILE, "use_zram": True, "use_bbg": True,
+            "use_kpm": "patched (开启并修补)",
+        })
+
+    def test_screenshot_profile_rejects_skipping_or_changed_options(self):
+        for key, value in (("use_zram", False), ("use_bbg", False), ("use_net_enhance", False),
+                           ("use_kpm", "enabled (开启)"), ("enable_susfs", True),
+                           ("supp_op", False), ("skip_incompatible", True),
+                           ("use_rekernel", True), ("cve_2026_43499_patch", True)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                inputs = {**trust.FEATURE_INPUTS, key: value}
+                trust.validate_inputs(inputs, f"custom=true\nsukisu={trust.KSU_COMMIT}\n")
 
 
 class SourceEditsTest(unittest.TestCase):
@@ -167,8 +190,58 @@ class SourceEditsTest(unittest.TestCase):
                     trust.prepare(root, root / "anykernel.sh")
             self.assertEqual(list(root.iterdir()), [])
 
+    def test_feature_patch_rejects_stop_before_any_source_edit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rejects = root / "common/fs/test.c.rej"
+            rejects.parent.mkdir(parents=True)
+            rejects.write_text("unresolved hunk\n")
+            with patch.object(trust.subprocess, "check_output",
+                              side_effect=[trust.ACK_COMMIT, trust.KSU_COMMIT]):
+                with self.assertRaisesRegex(ValueError, "unresolved rejects"):
+                    trust.prepare(root, root / "anykernel.sh", trust.FEATURE_PROFILE)
+            self.assertEqual(rejects.read_text(), "unresolved hunk\n")
+            self.assertFalse((root / ".songyuan-stock-module-trust").exists())
+
 
 class ArtifactChecksTest(unittest.TestCase):
+    def test_feature_image_passes_with_explicit_patch_evidence(self):
+        report = trust.verify_image(synthetic_feature_image(), trust.FEATURE_PROFILE, kpm_patched=True)
+        self.assertEqual(report["profile"], trust.FEATURE_PROFILE)
+        self.assertEqual(report["expected_inputs"], trust.FEATURE_INPUTS)
+        self.assertTrue(report["kpm_patched_by_workflow"])
+        self.assertTrue(report["module_signature_protection"])
+        self.assertFalse(report["runtime_wifi_and_mobile_data_tested"])
+
+    def test_missing_requested_features_or_kpm_patch_rejected(self):
+        for key in (*trust.FEATURE_CONFIG, "CONFIG_LSM"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                wrong_value = "y" if trust.FEATURE_CONFIG.get(key) == "n" else "n"
+                trust.verify_image(synthetic_feature_image({key: wrong_value}),
+                                   trust.FEATURE_PROFILE, kpm_patched=True)
+        with self.assertRaisesRegex(ValueError, "patch step"):
+            trust.verify_image(synthetic_feature_image(), trust.FEATURE_PROFILE)
+
+    def test_feature_profile_keeps_original_security_gates(self):
+        for key in ("CONFIG_MODULE_SIG", "CONFIG_MODULE_SIG_PROTECT", "CONFIG_MODVERSIONS"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                trust.verify_image(synthetic_feature_image({key: "n"}),
+                                   trust.FEATURE_PROFILE, kpm_patched=True)
+        with self.assertRaisesRegex(ValueError, "NOT embedded"):
+            trust.verify_image(synthetic_feature_image(certificate=False),
+                               trust.FEATURE_PROFILE, kpm_patched=True)
+        with self.assertRaisesRegex(ValueError, "RFKILL"):
+            trust.verify_image(synthetic_feature_image({"CONFIG_RFKILL": "y"}),
+                               trust.FEATURE_PROFILE, kpm_patched=True)
+
+    def test_profiles_cannot_be_interchanged_or_guessed(self):
+        with self.assertRaisesRegex(ValueError, "Baseline"):
+            trust.verify_image(synthetic_feature_image(), kpm_patched=True)
+        with self.assertRaisesRegex(ValueError, "feature configuration"):
+            trust.verify_image(synthetic_image(), trust.FEATURE_PROFILE, kpm_patched=True)
+        with self.assertRaisesRegex(ValueError, "Unknown songyuan profile"):
+            trust.verify_image(synthetic_image(), "unknown")
+
     def test_synthetic_image_passes_without_claiming_runtime_test(self):
         report = trust.verify_image(synthetic_image())
         self.assertTrue(report["stock_certificate_embedded"])
@@ -215,6 +288,33 @@ class ArtifactChecksTest(unittest.TestCase):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_selected_workflow_matches_screenshots_and_has_no_auto_trigger(self):
+        import yaml
+        workflow = yaml.safe_load((REPO / ".github/workflows/songyuan-6.12-selected-features.yml").read_text())
+        self.assertEqual(workflow.get("on", workflow.get(True)), {"workflow_dispatch": None})
+        inputs = workflow["jobs"]["build-songyuan"]["with"]
+        self.assertEqual(inputs, {**trust.FEATURE_INPUTS, "revision": "r1"})
+        trust.validate_inputs(inputs, (REPO / "config/config").read_text())
+        reusable = yaml.safe_load((REPO / ".github/workflows/build.yml").read_text())
+        trigger = reusable.get("on", reusable.get(True))
+        declared = trigger["workflow_call"]["inputs"]
+        self.assertLessEqual(inputs.keys(), declared.keys())
+        steps = reusable["jobs"]["build-kernel"]["steps"]
+        prepare = next(s for s in steps if "songyuan_stock_modules.py prepare" in s.get("run", ""))
+        verify = next(s for s in steps if "songyuan_stock_modules.py verify" in s.get("run", ""))
+        kpm = next(s for s in steps if s["name"] == "应用 KPM 补丁（构建期修补 Image）")
+        self.assertIn('--profile "${{ inputs.stock_gki_profile }}"', prepare["run"])
+        self.assertIn('--profile "${{ inputs.stock_gki_profile }}"', verify["run"])
+        self.assertIn('--kpm-patched "${KPM_IMAGE_PATCHED:-false}"', verify["run"])
+        self.assertLess(kpm["run"].index("mv -f ./oImage ./Image"),
+                        kpm["run"].index("KPM_IMAGE_PATCHED=true"))
+        self.assertIn("cmp -s ./Image ./oImage", kpm["run"])
+        self.assertLess(steps.index(kpm), steps.index(verify))
+        artifact = next(s for s in steps if s["name"] == "上传 AnyKernel3 刷入包")
+        self.assertIn(trust.FEATURE_PROFILE, artifact["with"]["name"])
+        if os.name == "posix":
+            subprocess.run(["bash", "-n"], input=kpm["run"], text=True, capture_output=True, check=True)
+
     def test_dedicated_workflow_matches_known_inputs_and_opt_in(self):
         try:
             import yaml
