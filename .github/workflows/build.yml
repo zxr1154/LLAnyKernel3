@@ -497,6 +497,22 @@ jobs:
             echo "KSU_LATEST_COMMIT_DATE=未知" >> $GITHUB_ENV
           fi
 
+
+      - name: 兼容 SukiSU KPM 与 Linux 6.12 netlink 结构
+        if: inputs.ksu_variant == 'SukiSU' && inputs.kernel_version == '6.12' && (startsWith(inputs.use_kpm, 'enabled') || startsWith(inputs.use_kpm, 'patched'))
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          # Linux 6.12 的 netlink_kernel_cfg 不再包含 cb_mutex。
+          # 仅修正编译期结构成员表，不变更固定的 SukiSU 提交。
+          test -f KernelSU/kernel/kpm/super_access.c || {
+            echo "::error::未找到 SukiSU KPM super_access.c"
+            exit 1
+          }
+          patch --batch --fuzz=0 --forward -p1 -d KernelSU \
+            < "$GITHUB_WORKSPACE/scripts/ksu_compat/sukisu-kpm-netlink-6.12.patch"
+          grep -qF '#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)' \
+            KernelSU/kernel/kpm/super_access.c
+
       # SukiSU 的 builtin 分支（内建+SUSFS 产品线）与 main 分支相互独立，
       # UAPI 版本落后于官方管理器（管理器按 main 分支构建，UAPI 4）。
       # 内核 UAPI < 管理 UAPI 时，管理器首页会误报"需要更新内核"。
