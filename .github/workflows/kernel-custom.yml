@@ -359,7 +359,7 @@ on:
 
       # ==================== 功能开关 ====================
       use_zram:
-        description: "启用 ZRAM 压缩算法（仅 5.10~6.6，6.12/6.18 不支持）"
+        description: "启用 ZRAM 压缩算法（6.12 追加到 zram.ko，不内建；6.18 不支持）"
         required: true
         type: boolean
         default: false

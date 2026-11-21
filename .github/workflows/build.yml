@@ -1183,16 +1183,38 @@ jobs:
         if: inputs.use_zram
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
-          # 6.12 及以上暂无上游 ZRAM 补丁源，直接跳过，避免被当成资源缺失中断构建
+          # 6.12 把 LZ4K/LZ4KD/LZ4K_OPLUS 编进 zram.ko，不把 zram/zsmalloc 改成内建。
+          # 6.18 仍没有对应后端，缺少资源时按 skip_incompatible 决定失败还是跳过。
           case "${{ inputs.kernel_version }}" in
-            6.12|6.18)
-              echo "::warning title=ZRAM 已跳过::内核 ${{ inputs.kernel_version }} 暂无 ZRAM 补丁源，已跳过 ZRAM 功能"
-              if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-                echo "" >> "$GITHUB_STEP_SUMMARY"
-                echo "> ⏭️ **ZRAM / LZ4KD** 已跳过：内核 ${{ inputs.kernel_version }} 暂无 ZRAM 补丁源（构建未中断）" >> "$GITHUB_STEP_SUMMARY"
+            6.12)
+              if ! python3 "$GITHUB_WORKSPACE/scripts/zram_612/apply.py" \
+                --kernel-root . \
+                --patches "$SUKISU_PATCHES" \
+                --defconfig "$DEFCONFIG"; then
+                if [ "$SKIP_INCOMPATIBLE" = "true" ]; then
+                  echo "::warning title=ZRAM 已跳过::6.12 ZRAM 后端接入失败，已跳过 ZRAM 功能"
+                  echo "ZRAM_SKIPPED=true" >> "$GITHUB_ENV"
+                  exit 0
+                fi
+                echo "::error::6.12 ZRAM 后端接入失败"
+                exit 1
               fi
-              echo "ZRAM_SKIPPED=true" >> "$GITHUB_ENV"
+              if ! grep -q '"drivers/block/zram/zram.ko"' modules.bzl \
+                || ! grep -q '"mm/zsmalloc.ko"' modules.bzl; then
+                echo "::error::6.12 modules.bzl 缺少 zram.ko 或 zsmalloc.ko，拒绝继续"
+                exit 1
+              fi
+              echo "ZRAM_612_MODULE=true" >> "$GITHUB_ENV"
               exit 0
+              ;;
+            6.18)
+              if [ "$SKIP_INCOMPATIBLE" = "true" ]; then
+                echo "::warning title=ZRAM 已跳过::内核 6.18 暂无 ZRAM 补丁源，已跳过 ZRAM 功能"
+                echo "ZRAM_SKIPPED=true" >> "$GITHUB_ENV"
+                exit 0
+              fi
+              echo "::error::内核 6.18 暂无 ZRAM 补丁源"
+              exit 1
               ;;
           esac
           # 前置检查：所有补丁资源必须存在，缺失时按兼容跳过策略处理，避免修改到一半再失败
@@ -1346,7 +1368,8 @@ jobs:
           EOF
           fi
 
-          if [ "${{ inputs.kernel_version }}" != "6.6" ] && [ "${{ inputs.kernel_version }}" != "5.10" ]; then
+          # 6.12 的 zram.ko / zsmalloc.ko 留在 GKI 模块清单里，不能改成内建。
+          if [ "${{ inputs.kernel_version }}" != "6.6" ] && [ "${{ inputs.kernel_version }}" != "5.10" ] && [ "${{ inputs.kernel_version }}" != "6.12" ]; then
             if grep -q "CONFIG_ZSMALLOC" "$CONFIG_FILE"; then
               sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$CONFIG_FILE"
             else
@@ -1360,7 +1383,7 @@ jobs:
             sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
           fi
 
-          if [ "${{ inputs.android_version }}" = "android14" ] || [ "${{ inputs.android_version }}" = "android15" ] || [ "${{ inputs.android_version }}" = "android16" ] || [ "${{ inputs.android_version }}" = "android17" ]; then
+          if [ "${{ inputs.kernel_version }}" != "6.12" ] && { [ "${{ inputs.android_version }}" = "android14" ] || [ "${{ inputs.android_version }}" = "android15" ] || [ "${{ inputs.android_version }}" = "android16" ] || [ "${{ inputs.android_version }}" = "android17" ]; }; then
             sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$KERNEL_ROOT/common/modules.bzl"
           fi
 
@@ -1898,6 +1921,23 @@ jobs:
                 cat "$FRAG"
                 echo "========================="
                 FRAG_FLAG=""
+                if [ "${{ inputs.kernel_version }}" = "6.12" ] && [ "${{ inputs.use_zram }}" = "true" ]; then
+                  grep -q '^CONFIG_ZRAM_BACKEND_LZ4KD=y$' "$FRAG" || { echo "::error::6.12 fragment 没有启用 LZ4KD"; exit 1; }
+                  grep -q '^CONFIG_ARM64_4K_PAGES=y$' "$FRAG" || { echo "::error::6.12 fragment 没有锁定 4K 页"; exit 1; }
+                  if grep -q '^CONFIG_ZRAM=y$' "$FRAG" || grep -q '^CONFIG_ZSMALLOC=y$' "$FRAG"; then
+                    echo "::error::6.12 fragment 把 zram/zsmalloc 编进了内核"
+                    exit 1
+                  fi
+                  if grep -q '^CONFIG_ARM64_16K_PAGES=y$' "$FRAG"; then
+                    echo "::error::6.12 fragment 请求了 16K 页"
+                    exit 1
+                  fi
+                  grep -q '"drivers/block/zram/zram.ko"' common/modules.bzl || { echo "::error::zram.ko 已从模块清单删除"; exit 1; }
+                  grep -q '"mm/zsmalloc.ko"' common/modules.bzl || { echo "::error::zsmalloc.ko 已从模块清单删除"; exit 1; }
+                fi
+                if [ "${{ inputs.use_kpm }}" = "true" ] && [ "${{ inputs.ksu_variant }}" = "SukiSU-Nova" ] && [ "${{ inputs.ksu_mode }}" != "禁用KSU" ]; then
+                  grep -q '^CONFIG_KPM=y$' "$FRAG" || { echo "::error::已请求 KPM，但 fragment 没有 CONFIG_KPM=y"; exit 1; }
+                fi
                 if [ -s "$FRAG" ]; then
                   FRAG_FLAG="--defconfig_fragment=//common:arch/arm64/configs/ksu.fragment"
                 fi
