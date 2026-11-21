@@ -75,6 +75,10 @@ if grep -q '^+CONFIG_ZRAM=y$' "$TMP/fragment" || grep -q '^+CONFIG_ZSMALLOC=y$' 
   exit 1
 fi
 grep -q '^+CONFIG_ZRAM_BACKEND_LZ4KD=y$' "$TMP/fragment"
+if grep -q 'ZRAM_DEF_COMP_LZ4KD' "$DEF" || grep -q 'ZRAM_DEF_COMP_LZORLE is not set' "$DEF"; then
+  echo "adapter changed the stock lzo-rle default compressor" >&2
+  exit 1
+fi
 if grep -q '^+CONFIG_ARM64_4K_PAGES=y$' "$TMP/fragment"; then
   echo "4K page symbol was already in the base defconfig and should not be repeated in the diff" >&2
   exit 1

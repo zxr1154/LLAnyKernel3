@@ -48,11 +48,10 @@ DELTA_OBJECTS = [
     "lz4k_embed/huawei/lz4kd/lz4kd_decode_delta.o",
 ]
 
+# 只增加后端。原厂 6.12.69 的默认算法是 lzo-rle，不能改成 lz4kd。
 FRAGMENT = """CONFIG_ZRAM_BACKEND_LZ4K=y
 CONFIG_ZRAM_BACKEND_LZ4KD=y
 CONFIG_ZRAM_BACKEND_LZ4K_OPLUS=y
-# CONFIG_ZRAM_DEF_COMP_LZORLE is not set
-CONFIG_ZRAM_DEF_COMP_LZ4KD=y
 CONFIG_ARM64_4K_PAGES=y
 """
 
