@@ -28,6 +28,13 @@ replacements = {
 
 path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "KernelSU/kernel/Makefile")
 lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+# 当前 builtin Makefile 已使用 RELEASE_API_BASE / shirkneko。旧键不存在时保持原文件。
+already_new = any(re.match(r"^RELEASE_API_BASE\s*:=", line) for line in lines) and not any(
+    re.match(r"^GITHUB_API_BASE\s*:=", line) for line in lines
+)
+if already_new:
+    print(f"already migrated: {path}")
+    sys.exit(0)
 for key, replacement in replacements.items():
     pattern = re.compile(rf"^{key}\s*:=.*$")
     matched = False
