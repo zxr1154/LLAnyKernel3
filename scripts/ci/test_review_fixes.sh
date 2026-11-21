@@ -42,6 +42,7 @@ if "origin main" in update or "branches: [main]" in update:
     sys.exit("update-data.yml still references main")
 for needle in (
     "branches: [dev]",
+    "ref: dev",
     "publish_data_update.sh",
     "HAS_WORKFLOW_PUSH_TOKEN",
     "secrets.WORKFLOW_PUSH_TOKEN != ''",
@@ -295,6 +296,26 @@ if grep -q '改为只推送 data' "$pub/deny.out"; then
   assert 1 "权限被拒绝时日志说明已改为只推送 data"
 else
   assert 0 "权限被拒绝时日志说明已改为只推送 data"
+fi
+
+# 其他分支上的独有提交不能被变基进 dev
+init_repo "$pub/side.git" "$pub/side"
+git -C "$pub/side" checkout -q -b feature
+printf 'side\n' > "$pub/side/data/side.txt"
+git -C "$pub/side" add data/side.txt
+git -C "$pub/side" -c user.email="t@example.com" -c user.name="t" commit -q -m "side only"
+dirty_both "$pub/side"
+set +e
+run_publish "$pub/side" false "$pub/side.out"
+side_status=$?
+set -e
+assert "$([ "$side_status" -ne 0 ] && echo 1 || echo 0)" "其他分支推送被拒绝（实际退出码 $side_status）"
+git --git-dir="$pub/side.git" show dev:data/version.txt > "$pub/side-data.txt"
+assert "$([ "$(cat "$pub/side-data.txt")" = "old" ] && echo 1 || echo 0)" "其他分支的更新没有写入 dev"
+if git --git-dir="$pub/side.git" log dev --format='%s' | grep -q 'side only'; then
+  assert 0 "其他分支的独有提交没有进入 dev"
+else
+  assert 1 "其他分支的独有提交没有进入 dev"
 fi
 
 # 没有变更

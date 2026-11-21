@@ -55,6 +55,17 @@ workflow_dirty() {
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+git fetch "$REMOTE" "$BRANCH"
+current_branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$current_branch" != "$BRANCH" ] && [ "$current_branch" != "HEAD" ]; then
+  echo "::error::数据更新只能从 ${BRANCH} 推送，当前分支是 ${current_branch}。请在 dev 上运行，或让工作流把 checkout ref 固定为 ${BRANCH}。"
+  exit 1
+fi
+if ! git merge-base --is-ancestor HEAD "${REMOTE}/${BRANCH}"; then
+  echo "::error::HEAD 含有 ${REMOTE}/${BRANCH} 上没有的提交，已拒绝推送，避免把其他历史写入 ${BRANCH}。"
+  exit 1
+fi
+
 workflows_changed=false
 if workflow_dirty; then
   workflows_changed=true

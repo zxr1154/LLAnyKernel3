@@ -24,8 +24,11 @@ jobs:
       # 配置了 WORKFLOW_PUSH_TOKEN（带 workflow 权限的 PAT）时，用它检出并推送
       # data/ 与 workflow 选择/矩阵。未配置时回退 GITHUB_TOKEN：它不能修改
       # .github/workflows，提交步骤会只推送 data/ 并写明原因。
+      # 定时、手动和 push 都只更新 dev。手动运行若选了其他分支或 tag，
+      # 仍检出 dev，避免把那条历史变基后推到 dev。
       - uses: actions/checkout@v7
         with:
+          ref: dev
           token: ${{ secrets.WORKFLOW_PUSH_TOKEN || github.token }}
 
       - uses: actions/setup-python@v6
