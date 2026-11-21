@@ -33,7 +33,8 @@ PATCHES="$TMP/src/$top"
 
 DEF="$TMP/kernel/arch/arm64/configs/gki_defconfig"
 mkdir -p "$(dirname "$DEF")"
-printf '%s\n' 'CONFIG_ZRAM=m' 'CONFIG_LOCALVERSION="-4k"' > "$DEF"
+# 基准 defconfig 已经声明 4K 页时，适配器不得重复追加，fragment 里也不会再出现这一行。
+printf '%s\n' 'CONFIG_ZRAM=m' 'CONFIG_LOCALVERSION="-4k"' 'CONFIG_ARM64_4K_PAGES=y' > "$DEF"
 cp "$DEF" "$DEF.orig"
 printf '%s\n' '"drivers/block/zram/zram.ko",' '"mm/zsmalloc.ko",' > "$TMP/kernel/modules.bzl"
 
@@ -62,19 +63,23 @@ if grep -q '^CONFIG_ZRAM=y$' "$DEF"; then
   exit 1
 fi
 grep -q '^CONFIG_ZRAM_BACKEND_LZ4KD=y$' "$DEF"
-grep -q '^CONFIG_ARM64_4K_PAGES=y$' "$DEF"
+test "$(grep -c '^CONFIG_ARM64_4K_PAGES=y$' "$DEF")" = 1
 grep -q 'zram.ko' "$TMP/kernel/modules.bzl"
 grep -q 'zsmalloc.ko' "$TMP/kernel/modules.bzl"
 
 # The workflow fragment is the added defconfig lines. ZRAM=m must not appear there.
 diff -u "$DEF.orig" "$DEF" > "$TMP/diff" || true
 grep '^+' "$TMP/diff" | grep -v '^+++' > "$TMP/fragment" || true
-if grep -q '^+CONFIG_ZRAM=y$' "$TMP/fragment" || grep -q '^+CONFIG_ZSMALLOC=y$' "$TMP/fragment"; then
-  echo "fragment would builtin zram/zsmalloc" >&2
+if grep -q '^+CONFIG_ZRAM=y$' "$TMP/fragment" || grep -q '^+CONFIG_ZSMALLOC=y$' "$TMP/fragment" || grep -q '^+CONFIG_ARM64_16K_PAGES=y$' "$TMP/fragment"; then
+  echo "fragment would builtin zram/zsmalloc or select 16K pages" >&2
   exit 1
 fi
-grep -q '^+CONFIG_ARM64_4K_PAGES=y$' "$TMP/fragment"
 grep -q '^+CONFIG_ZRAM_BACKEND_LZ4KD=y$' "$TMP/fragment"
+if grep -q '^+CONFIG_ARM64_4K_PAGES=y$' "$TMP/fragment"; then
+  echo "4K page symbol was already in the base defconfig and should not be repeated in the diff" >&2
+  exit 1
+fi
+grep -q '^CONFIG_ARM64_4K_PAGES=y$' "$DEF.orig"
 
 bad="$TMP/bad"
 mkdir -p "$bad/drivers/block/zram" "$bad/other"

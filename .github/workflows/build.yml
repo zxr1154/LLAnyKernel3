@@ -1921,21 +1921,20 @@ jobs:
                 cat "$FRAG"
                 echo "========================="
                 FRAG_FLAG=""
-                if [ "${{ inputs.kernel_version }}" = "6.12" ] && [ "${{ inputs.use_zram }}" = "true" ]; then
-                  grep -q '^CONFIG_ZRAM_BACKEND_LZ4KD=y$' "$FRAG" || { echo "::error::6.12 fragment 没有启用 LZ4KD"; exit 1; }
-                  grep -q '^CONFIG_ARM64_4K_PAGES=y$' "$FRAG" || { echo "::error::6.12 fragment 没有锁定 4K 页"; exit 1; }
-                  if grep -q '^CONFIG_ZRAM=y$' "$FRAG" || grep -q '^CONFIG_ZSMALLOC=y$' "$FRAG"; then
-                    echo "::error::6.12 fragment 把 zram/zsmalloc 编进了内核"
-                    exit 1
-                  fi
-                  if grep -q '^CONFIG_ARM64_16K_PAGES=y$' "$FRAG"; then
-                    echo "::error::6.12 fragment 请求了 16K 页"
+                # 4K 页可能已经在基准 defconfig 里。fragment 只含新增行，
+                # 所以要同时看基准文件和 fragment。ZRAM 被 skip 时不再要求这些行。
+                if [ "${{ inputs.kernel_version }}" = "6.12" ] && [ "${{ inputs.use_zram }}" = "true" ] && [ "${ZRAM_SKIPPED:-}" != "true" ]; then
+                  cfg_has() { grep -q "^$1$" "$DEFCONFIG.orig" "$FRAG"; }
+                  cfg_has 'CONFIG_ZRAM_BACKEND_LZ4KD=y' || { echo "::error::6.12 没有启用 LZ4KD"; exit 1; }
+                  cfg_has 'CONFIG_ARM64_4K_PAGES=y' || { echo "::error::6.12 没有锁定 4K 页"; exit 1; }
+                  if cfg_has 'CONFIG_ZRAM=y' || cfg_has 'CONFIG_ZSMALLOC=y' || cfg_has 'CONFIG_ARM64_16K_PAGES=y'; then
+                    echo "::error::6.12 配置把 zram/zsmalloc 编进内核，或请求了 16K 页"
                     exit 1
                   fi
                   grep -q '"drivers/block/zram/zram.ko"' common/modules.bzl || { echo "::error::zram.ko 已从模块清单删除"; exit 1; }
                   grep -q '"mm/zsmalloc.ko"' common/modules.bzl || { echo "::error::zsmalloc.ko 已从模块清单删除"; exit 1; }
                 fi
-                if [ "${{ inputs.use_kpm }}" = "true" ] && [ "${{ inputs.ksu_variant }}" = "SukiSU-Nova" ] && [ "${{ inputs.ksu_mode }}" != "禁用KSU" ]; then
+                if [ "${{ inputs.use_kpm }}" = "true" ] && [ "${{ inputs.ksu_variant }}" = "SukiSU-Nova" ] && [ "${{ inputs.ksu_mode }}" != "禁用KSU" ] && [ "${{ inputs.skip_incompatible }}" != "true" ]; then
                   grep -q '^CONFIG_KPM=y$' "$FRAG" || { echo "::error::已请求 KPM，但 fragment 没有 CONFIG_KPM=y"; exit 1; }
                 fi
                 if [ -s "$FRAG" ]; then
