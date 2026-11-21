@@ -2137,3 +2137,19 @@ jobs:
           path: patch-rejects/
           if-no-files-found: ignore
           compression-level: 9
+
+      - name: 收集 6.12 ZRAM 模块
+        if: inputs.kernel_version == '6.12' && inputs.use_zram && env.ZRAM_SKIPPED != 'true'
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/zram_612/collect_modules.sh" \
+            "$KERNEL_ROOT" \
+            "$GITHUB_WORKSPACE/zram-modules"
+
+      - name: 上传 6.12 ZRAM 模块
+        if: inputs.kernel_version == '6.12' && inputs.use_zram && env.ZRAM_SKIPPED != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.AK3_NAME }}-zram-modules
+          path: zram-modules/
+          if-no-files-found: error
+          compression-level: 9
