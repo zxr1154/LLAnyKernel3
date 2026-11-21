@@ -10,6 +10,18 @@ mkdir -p "$OUT"
 pick() {
   local name="$1"
   local path best=""
+  local candidate
+  local -a roots=()
+  for candidate in "$ROOT/bazel-bin" "$ROOT/bazel-out" "$ROOT/out"; do
+    if [[ -e "$candidate" ]]; then
+      roots+=("$candidate")
+    fi
+  done
+  if [[ ${#roots[@]} -eq 0 ]]; then
+    roots+=("$ROOT")
+  fi
+  # bazel-bin 和 bazel-out 是符号链接。从这些起点用 -H 进入，
+  # 避免 find 在遍历内核树时跳过它们。
   while IFS= read -r path; do
     case "$path" in
       *.unstripped|*.ko.debug) continue ;;
@@ -21,7 +33,7 @@ pick() {
     if [[ -z "$best" ]]; then
       best="$path"
     fi
-  done < <(find "$ROOT" -type f -name "$name" 2>/dev/null | sort)
+  done < <(find -H "${roots[@]}" -type f -name "$name" 2>/dev/null | sort)
   if [[ -z "$best" ]]; then
     echo "::error::未找到 ${name}。内核配置是模块，但 dist 没有产出该文件。" >&2
     return 1
