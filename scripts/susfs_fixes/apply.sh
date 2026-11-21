@@ -570,7 +570,9 @@ else:
         open(p, "w", encoding="utf-8", errors="surrogateescape").write(s.replace(old2, new2, 1))
         print("fs/susfs.c: 已加 SUSFS 路径隐藏 LOOP 回退")
 PYEOF
-  grep -n 'FINASU_SUS_PATH_LOOP_FALLBACK' fs/susfs.c | head
+  # 上游函数体不匹配时上面的 python 只告警并跳过，标记行不存在。
+  # grep 无匹配会返回 1；在 set -o pipefail 下不能让这次查看中断补丁步骤。
+  grep -n 'FINASU_SUS_PATH_LOOP_FALLBACK' fs/susfs.c | head || true
 else
   echo "::warning::未找到 fs/susfs.c 的 susfs_add_sus_path，跳过路径隐藏回退"
 fi

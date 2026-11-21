@@ -2065,6 +2065,7 @@ jobs:
               fi
               echo "$REL" >> "$REJECTS_DIR/index.txt"
             done
+            printf '%s\n' "${{ inputs.ksu_variant }}_kernel-${CONFIG}-Rejects" > "$REJECTS_DIR/artifact-name.txt"
           fi
 
       - name: 上传 AnyKernel3 刷入包

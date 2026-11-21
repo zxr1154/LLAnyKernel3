@@ -434,6 +434,9 @@ jobs:
       - build-a16-6-12
       - build-a17-6-18
     steps:
+      - name: 检出汇总脚本
+        uses: actions/checkout@v7
+
       - name: 下载冲突文件
         uses: actions/download-artifact@v8
         with:
@@ -441,18 +444,7 @@ jobs:
           pattern: '*-Rejects'
 
       - name: 处理冲突文件
-        run: |
-          mkdir -p aio-rejects
-          for dir in ./downloaded-artifacts/*-Rejects; do
-            [ -d "$dir" ] || continue
-            dirname=$(basename "$dir")
-            original_name=${dirname%-Rejects}
-            mkdir -p "aio-rejects/$original_name"
-            cp -r "$dir/." "aio-rejects/$original_name/"
-          done
-          if [ "$(ls -A aio-rejects 2>/dev/null)" ]; then
-            cd aio-rejects && zip -r -q -9 ../AIO-REJ.zip . && cd ..
-          fi
+        run: bash scripts/ci/aggregate_rejects.sh ./downloaded-artifacts ./aio-rejects ./AIO-REJ.zip
 
       - name: 上传汇总冲突文件
         uses: actions/upload-artifact@v6
@@ -959,6 +951,13 @@ jobs:
             sleep 10
           done
 
+      # 单个产物会被 download-artifact 直接解压到目标目录，先整理成子目录，
+      # 后面的管理器、模块和内核上传才能沿用「每个产物一个目录」的查找。
+      - name: 整理单产物下载布局
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/normalize_single_artifact_dir.sh ./downloaded-artifacts
+
       # ==================== 上传管理器和模块 ====================
       - name: 上传管理器和模块
         continue-on-error: true
@@ -990,16 +989,8 @@ jobs:
           # 避免多版本同名散文件（Image/anykernel.sh...）在 Release 上冲突报错；
           # 上传全部模式（目录内已有 zip + img）保持逐文件上传，互不影响。
           # --clobber 保证 job 重跑时同名资产覆盖而非报错。
-          for dir in ./downloaded-artifacts/*/; do
-            [ -d "$dir" ] || continue
-            dir="${dir%/}"
-            case "$dir/" in
-              *-Build-Logs/|*-Rejects/|*Manager*/|*susfs-*/|*nomount-*/) continue ;;
-            esac
-            # 只处理内核刷入包：仅上传模式含 anykernel.sh，上传全部模式含 *-AnyKernel3.zip
-            if [ ! -f "$dir/anykernel.sh" ] && ! ls "$dir"/*-AnyKernel3.zip >/dev/null 2>&1; then
-              continue
-            fi
+          while IFS= read -r dir; do
+            [ -n "$dir" ] || continue
             if ! ls "$dir"*.zip >/dev/null 2>&1; then
               (cd "$dir" && zip -r -q -9 "$(basename "$dir").zip" .)
               echo "上传 $(basename "$dir").zip..."
@@ -1011,7 +1002,7 @@ jobs:
                 gh release upload "$NEW_TAG" "$file" --clobber
               done
             fi
-          done
+          done < <(bash scripts/ci/release_kernel_dirs.sh ./downloaded-artifacts)
 
       # ==================== 构建摘要 ====================
       - name: 构建摘要
