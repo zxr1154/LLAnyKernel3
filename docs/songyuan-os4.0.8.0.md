@@ -7,8 +7,12 @@
 - 构建时间: `Sat Sep  5 12:19:39 UTC 2026`
 
 保留原厂 ZRAM 与 zsmalloc 模块；专用工作流不再提供额外压缩算法开关。
-这不禁用手机已有的 ZRAM。BBG、网络增强、Re-Kernel、CVE 修复、SUSFS、KPM
-继续由各自的开关控制。
+NoMount 默认开启。网络增强保留 IPSet、BBR 和 Qdisc，关闭会把 netfs 提升为
+内建的 CIFS，继续让原厂 system_dlkm 加载 netfs.ko。打包前读取最终 Image 的
+内嵌配置，检查 netfs、ZRAM、zsmalloc 保持模块，以及请求的 NoMount 已启用。
+
+6.12 内核会为已集成的 BBG 与仍调用 `security_add_hooks()`
+的内建 SukiSU-Nova 分别预留注册容量。容量不足时仍由内核的原有检查处理。
 
 ## 为什么不部署通用 ZRAM 模块
 

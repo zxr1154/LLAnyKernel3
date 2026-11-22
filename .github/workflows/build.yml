@@ -82,6 +82,10 @@ on:
         required: true
         type: boolean
         default: false
+      preserve_songyuan_modules:
+        description: "保留 songyuan OS4.0.8.0 的原厂 netfs、ZRAM 和 zsmalloc 模块"
+        type: boolean
+        default: false
       use_kpm:
         required: true
         type: boolean
@@ -1445,10 +1449,15 @@ jobs:
           # blkdev_put_no_open 在 Linux 6.9+ 已移入私有头 block/blk.h（6.15+ 为双参
           # 形态），导致 android17-6.18 编译报隐式声明；按头文件实际内容打兼容补丁
           bash "$GITHUB_WORKSPACE/scripts/bbg_fixes/fix_blkdev_helper.sh" common
+          if [ "${{ inputs.kernel_version }}" = "6.12" ]; then
+            python3 "$GITHUB_WORKSPACE/scripts/sukisu_compat/reserve_lsm_slot.py" common BBG
+          fi
 
       - name: 应用网络增强（BBRv3 / IPSet / Qdisc / CIFS）
         if: inputs.use_net_enhance
         working-directory: ${{ env.KERNEL_ROOT }}/common
+        env:
+          PRESERVE_SONGYUAN_MODULES: ${{ inputs.preserve_songyuan_modules }}
         run: |
           set -euo pipefail
 
@@ -1566,18 +1575,18 @@ jobs:
             set_config "CONFIG_$cfg" y
           done
 
-          # CIFS 网络文件系统（NETFS_SUPPORT 为隐藏符号，由 Kconfig 按需选中）
-          for cfg in CIFS NETWORK_FILESYSTEMS KEYS CIFS_XATTR CIFS_POSIX; do
-            set_config "CONFIG_$cfg" y
-          done
+          if [ "$PRESERVE_SONGYUAN_MODULES" = "true" ]; then
+            # 原厂 system_dlkm 仍加载 netfs.ko，CIFS=y 会在 Image 中重复导出 netfs 符号。
+            scripts/config --file "$DEFCONFIG" --disable CIFS
+            echo "[+] songyuan 保留原厂 netfs.ko，已关闭额外 CIFS"
+          else
+            for cfg in CIFS NETWORK_FILESYSTEMS KEYS CIFS_XATTR CIFS_POSIX; do
+              set_config "CONFIG_$cfg" y
+            done
+            grep -q '^CONFIG_CIFS=y$' "$DEFCONFIG" || net_fail "CIFS 配置写入校验失败"
 
-          # CIFS=y 会把其 Kconfig select 的 NETFS_SUPPORT / CRYPTO_LIB_ARC4 一并提升
-          # 为内建，而 GKI 模块清单仍期待对应 .ko，dist 阶段产物校验将失败，需删除
-          # 对应条目。清单位置随版本变化：6.12 及更早版本在根 modules.bzl，6.18 起
-          # 迁移到 bazel/modules_private.bzl（根 modules.bzl 仅为转发 shim）。
-          # libarc4 仅在 CIFS Kconfig 声明 select 的版本（6.18+）需要处理，更早版本
-          # 由 CONFIG_PPP_MPPE=m 维持为模块，删除反而破坏其依赖。
-          if grep -q '^CONFIG_CIFS=y$' "$DEFCONFIG"; then
+            # CIFS=y 将 NETFS_SUPPORT 提升为内建。6.18+ 的 CIFS 也内建 libarc4。
+            # 构建产物清单只列仍作为模块生成的 .ko。
             for MODULE_LIST in modules.bzl bazel/modules_private.bzl; do
               [ -f "$MODULE_LIST" ] || continue
               sed -i '/"fs\/netfs\/netfs\.ko",/d' "$MODULE_LIST"
@@ -1591,7 +1600,6 @@ jobs:
           grep -q '^CONFIG_IP_SET=y$' "$DEFCONFIG" || net_fail "IPSet 配置写入校验失败"
           grep -q '^CONFIG_IP_SET_MAX=65534$' "$DEFCONFIG" || net_fail "IPSet 集合数上限配置写入校验失败"
           grep -q '^CONFIG_NET_SCH_FQ=y$' "$DEFCONFIG" || net_fail "FQ qdisc 配置写入校验失败"
-          grep -q '^CONFIG_CIFS=y$' "$DEFCONFIG" || net_fail "CIFS 配置写入校验失败"
           if [ -n "$BBR3_PATCH" ]; then
             grep -q '^CONFIG_DEFAULT_TCP_CONG="bbr3"$' "$DEFCONFIG" || net_fail "BBRv3 默认拥塞控制配置写入校验失败"
           else
@@ -1940,6 +1948,34 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           compression-level: 9
+
+      - name: 校验 songyuan 最终内核配置
+        if: inputs.preserve_songyuan_modules
+        working-directory: ${{ env.KERNEL_ROOT }}
+        env:
+          USE_NOMOUNT: ${{ inputs.use_nomount }}
+        run: |
+          set -euo pipefail
+          final_config="$(mktemp)"
+          trap 'rm -f "$final_config"' EXIT
+          common/scripts/extract-ikconfig bazel-bin/common/kernel_aarch64/Image > "$final_config"
+          for expected in CONFIG_NETFS_SUPPORT=m CONFIG_ZRAM=m CONFIG_ZSMALLOC=m; do
+            grep -Fxq "$expected" "$final_config" || {
+              echo "::error::最终 Image 未保留 $expected"
+              exit 1
+            }
+          done
+          if grep -Eq '^CONFIG_CIFS=[ym]$' "$final_config"; then
+            echo "::error::songyuan 最终 Image 启用了 CIFS"
+            exit 1
+          fi
+          if [ "$USE_NOMOUNT" = "true" ] && [ "${NOMOUNT_SKIPPED:-}" != "true" ]; then
+            grep -Fxq CONFIG_NOMOUNT=y "$final_config" || {
+              echo "::error::最终 Image 未启用 CONFIG_NOMOUNT=y"
+              exit 1
+            }
+          fi
+          echo "[+] 最终 Image 已核对 netfs/ZRAM/zsmalloc 为模块，NoMount 符合构建选项"
 
       - name: 准备 Boot 镜像
         run: |

@@ -154,6 +154,7 @@ jobs:
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       gki_commit: ${{ inputs.gki_commit }}
+      preserve_songyuan_modules: true
       use_zram: false
       use_bbg: ${{ inputs.use_bbg }}
       use_net_enhance: ${{ inputs.use_net_enhance }}

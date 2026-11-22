@@ -153,6 +153,8 @@ def main():
         build_passed.append(passed)
     if not build_passed or "gki_commit" not in build_passed[0]:
         errors.append("device workflow does not route gki_commit into build.yml")
+    if not build_passed or build_passed[0].get("preserve_songyuan_modules") is not True:
+        errors.append("device workflow must preserve the stock netfs and ZRAM modules")
     pinned = build_passed[0].get("android_version"), build_passed[0].get("kernel_version"), build_passed[0].get("sub_level"), build_passed[0].get("os_patch_level")
     if pinned != ("android16", "6.12", "69", "2026-03"):
         errors.append(f"device workflow kernel selection changed: {pinned}")
