@@ -314,11 +314,6 @@ on:
         description: "自定义内核版本名"
         required: false
         type: string
-      gki_commit:
-        description: "固定 kernel/common 提交（40位十六进制，留空=月度分支尖端）。只改源码基线，不改版本名。"
-        required: false
-        type: string
-        default: ""
       build_time:
         description: "自定义构建时间 (留空=自动获取当前北京时间) (示例 Tue Dec  1 08:10:00 UTC 2026)"
         required: false
@@ -574,7 +569,6 @@ jobs:
       ksu_cert_hash: ${{ needs.get-ksu-manager.outputs.managerCertHash }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
-      gki_commit: ${{ inputs.gki_commit || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
       use_net_enhance: ${{ inputs.use_net_enhance }}
