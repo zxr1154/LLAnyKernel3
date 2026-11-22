@@ -102,6 +102,15 @@ def main():
         "Sat Sep  5 12:19:39 UTC 2026"
     ):
         errors.append("device workflow build_time default changed")
+    variants = device["on"]["workflow_dispatch"]["inputs"]["kernelsu_variant"]
+    if variants.get("options") != ["SukiSU-Nova"]:
+        errors.append("device workflow must select only SukiSU-Nova")
+    if "use_zram" in device_inputs:
+        errors.append("songyuan must preserve the stock vendor ZRAM modules")
+    for job_name, job in device["jobs"].items():
+        if job.get("uses", "").endswith(("/build.yml", "/get-manager.yml")):
+            if (job.get("with") or {}).get("use_zram") is not False:
+                errors.append(f"device job {job_name} must keep use_zram=false")
 
     for caller_name, caller in parsed.items():
         for job_name, job in (caller.get("jobs") or {}).items():
