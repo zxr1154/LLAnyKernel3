@@ -25,6 +25,11 @@ on:
       os_patch_level:
         required: true
         type: string
+      gki_commit:
+        description: "固定 kernel/common 的 40 位提交。留空则使用月度分支尖端。只改变源码基线，不改版本名。"
+        required: false
+        type: string
+        default: ""
 
       # ==================== KernelSU 配置 ====================
       ksu_variant:
@@ -396,6 +401,13 @@ jobs:
           if [ "$SYNC_OK" != "true" ]; then
             echo "::error::repo sync 连续 3 次尝试均失败（上游连接停滞或不可用）"
             exit 1
+          fi
+
+          GKI_COMMIT="${{ inputs.gki_commit }}"
+          if [ -n "$GKI_COMMIT" ]; then
+            bash "$GITHUB_WORKSPACE/scripts/ci/pin_gki_commit.sh" common "$GKI_COMMIT"
+          else
+            echo "未固定 kernel/common，使用月度分支尖端: $(git -C common rev-parse HEAD)"
           fi
 
           # 完整性守卫：repo sync 断点续传偶发留下检出不完整的项目，表现为目录里
