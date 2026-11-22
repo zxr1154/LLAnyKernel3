@@ -1603,62 +1603,7 @@ jobs:
         if: inputs.use_rekernel
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          if ( set -e
-            echo "Integrating Re-Kernel..."
-            TMP_REKERNEL=/tmp/rekernel
-            rm -rf "$TMP_REKERNEL"
-            git clone --depth 1 https://github.com/Sakion-Team/Re-Kernel.git "$TMP_REKERNEL"
-
-            # 同步上游拆分后的完整驱动源码
-            rm -rf common/drivers/rekernel
-            mkdir -p common/drivers/rekernel
-            cp -a "$TMP_REKERNEL/LKM-Source/." common/drivers/rekernel/
-
-            # 将上游外置模块配置适配为内核内置驱动
-            REKERNEL_MAKEFILE="common/drivers/rekernel/Makefile"
-            sed -i 's/^obj-m := rekernel\.o$/obj-$(CONFIG_REKERNEL) += rekernel.o/' "$REKERNEL_MAKEFILE"
-            grep -qF 'ccflags-$(CONFIG_REKERNEL_LEGACY_NETLINK) += -DLEGACY_NETLINK' "$REKERNEL_MAKEFILE" || \
-              echo 'ccflags-$(CONFIG_REKERNEL_LEGACY_NETLINK) += -DLEGACY_NETLINK' >> "$REKERNEL_MAKEFILE"
-            sed -i '/^[[:space:]]*depends on MODULES[[:space:]]*$/d' common/drivers/rekernel/Kconfig
-
-            # 挂载到驱动树
-            if ! grep -qF 'source "drivers/rekernel/Kconfig"' common/drivers/Kconfig; then
-              sed -i '/^endmenu$/i source "drivers/rekernel/Kconfig"' common/drivers/Kconfig
-            fi
-            if ! grep -qF 'obj-$(CONFIG_REKERNEL) += rekernel/' common/drivers/Makefile; then
-              echo 'obj-$(CONFIG_REKERNEL) += rekernel/' >> common/drivers/Makefile
-            fi
-
-            # 修正头文件包含路径（适配 in-tree 编译）
-            sed -i 's|#include <../android/binder_internal.h>|#include "../android/binder_internal.h"|g' common/drivers/rekernel/rekernel_binder.c
-            # 补齐 5.10 binder_internal.h 使用 DEFINE_SHOW_ATTRIBUTE 所需的定义
-            grep -qF '#include <linux/seq_file.h>' common/drivers/rekernel/rekernel_binder.c || \
-              sed -i '/#include <linux\/kprobes.h>/a #include <linux/seq_file.h>' common/drivers/rekernel/rekernel_binder.c
-
-            # 配置 defconfig（幂等）
-            grep -q '^CONFIG_REKERNEL=y$' "$DEFCONFIG" || echo "CONFIG_REKERNEL=y" >> "$DEFCONFIG"
-            grep -q '^CONFIG_REKERNEL_NETWORK=y$' "$DEFCONFIG" || echo "CONFIG_REKERNEL_NETWORK=y" >> "$DEFCONFIG"
-          ); then
-            exit 0
-          fi
-
-          # 集成失败：回滚半成品状态，避免残留引用破坏编译
-          rm -rf common/drivers/rekernel
-          sed -i '\|source "drivers/rekernel/Kconfig"|d' common/drivers/Kconfig 2>/dev/null || true
-          sed -i '\|obj-$(CONFIG_REKERNEL) += rekernel/|d' common/drivers/Makefile 2>/dev/null || true
-          sed -i '/^CONFIG_REKERNEL=y$/d; /^CONFIG_REKERNEL_NETWORK=y$/d' "$DEFCONFIG" 2>/dev/null || true
-
-          if [ "$SKIP_INCOMPATIBLE" = "true" ]; then
-            echo "::warning title=Re-Kernel 已跳过::Re-Kernel 集成失败（仓库不可用或源码不适配当前内核），已回滚并跳过该功能"
-            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "> ⏭️ **Re-Kernel** 已自动跳过：集成失败（仓库不可用或源码不适配当前内核），已回滚（构建未中断）" >> "$GITHUB_STEP_SUMMARY"
-            fi
-            echo "REKERNEL_SKIPPED=true" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          echo "::error::Re-Kernel 集成失败"
-          exit 1
+          bash "$GITHUB_WORKSPACE/scripts/ci/integrate_rekernel.sh" "$KERNEL_ROOT" "$DEFCONFIG"
 
       - name: 配置内核选项
         working-directory: ${{ env.KERNEL_ROOT }}
@@ -1704,30 +1649,9 @@ jobs:
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@%REPO_NAME%"' >> "$DEFCONFIG"
           fi
 
-          if [ "${{ inputs.ksu_variant }}" == "SukiSU-Nova" ] || [ "${{ inputs.ksu_variant }}" == "BakaSU" ]; then
-            if [ "${{ inputs.use_kpm }}" == "true" ]; then
-              if grep -RqsE '^[[:space:]]*config[[:space:]]+KPM([[:space:]]|$)' common KernelSU 2>/dev/null; then
-                echo "CONFIG_KPM=y" >> "$DEFCONFIG"
-              elif [ "$SKIP_INCOMPATIBLE" = "true" ]; then
-                echo "::warning title=KPM 已跳过::当前 KernelSU 代码未声明 CONFIG_KPM，已跳过 KPM 功能"
-                if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-                  echo "" >> "$GITHUB_STEP_SUMMARY"
-                  echo "> ⏭️ **KPM** 已自动跳过：当前 KernelSU 代码未声明 CONFIG_KPM（构建未中断）" >> "$GITHUB_STEP_SUMMARY"
-                fi
-              else
-                echo "错误: 已请求启用 KPM，但当前 KernelSU 代码未声明 CONFIG_KPM" >&2
-                exit 1
-              fi
-            fi
-          elif [ "${{ inputs.ksu_variant }}" == "FinaSU" ]; then
-            if [ "${{ inputs.use_kpm }}" == "true" ]; then
-              echo "::warning title=KPM 不适用::FinaSU 不支持 KPM，已忽略该选项继续构建"
-              if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-                echo "" >> "$GITHUB_STEP_SUMMARY"
-                echo "> ⏭️ **KPM** 已忽略：FinaSU 变体不支持 KPM（构建未中断）" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            fi
-          fi
+          bash "$GITHUB_WORKSPACE/scripts/ci/configure_kpm.sh" \
+            "$KERNEL_ROOT" "$DEFCONFIG" "${{ inputs.ksu_variant }}" \
+            "${{ inputs.ksu_mode }}" "${{ inputs.use_kpm }}" "$SKIP_INCOMPATIBLE"
 
           # FinaSU + SUSFS：选择 SUSFS Inline hook 后端；匹配的 50_add 补丁
           # 提供直接 ksu_handle_* 调用点，FinaSU Kbuild 会在编译期校验。
@@ -1930,8 +1854,10 @@ jobs:
               else
                 # 提取 gki_defconfig 修改到 fragment，避免 bazel trim 检查失败
                 FRAG="common/arch/arm64/configs/ksu.fragment"
-                diff "$DEFCONFIG.orig" "$DEFCONFIG" | grep '^>' | sed 's/^> //; s/^[[:space:]]*//' > "$FRAG" || true
-                cp "$DEFCONFIG.orig" "$DEFCONFIG"
+                bash "$GITHUB_WORKSPACE/scripts/ci/prepare_defconfig_fragment.sh" \
+                  "$DEFCONFIG.orig" "$DEFCONFIG" "$FRAG" \
+                  "$LOG_DIR/defconfig-fragment" \
+                  "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
                 echo "=== KSU Fragment 内容 ==="
                 cat "$FRAG"
                 echo "========================="
