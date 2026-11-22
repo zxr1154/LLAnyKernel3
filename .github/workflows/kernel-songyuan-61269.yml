@@ -16,8 +16,6 @@ on:
         type: choice
         options:
           - SukiSU-Nova
-          - BakaSU
-          - FinaSU
         default: SukiSU-Nova
       build_channel:
         description: "构建管理器通道"
