@@ -107,10 +107,16 @@ def main():
         errors.append("device workflow must select only SukiSU-Nova")
     if "use_zram" in device_inputs:
         errors.append("songyuan must preserve the stock vendor ZRAM modules")
+    nomount = device["on"]["workflow_dispatch"]["inputs"]["use_nomount"]
+    if nomount.get("default") is not True:
+        errors.append("songyuan must enable NoMount by default")
     for job_name, job in device["jobs"].items():
         if job.get("uses", "").endswith(("/build.yml", "/get-manager.yml")):
-            if (job.get("with") or {}).get("use_zram") is not False:
+            passed = job.get("with") or {}
+            if passed.get("use_zram") is not False:
                 errors.append(f"device job {job_name} must keep use_zram=false")
+            if passed.get("use_nomount") != "${{ inputs.use_nomount || false }}":
+                errors.append(f"device job {job_name} must route the selected NoMount value")
 
     for caller_name, caller in parsed.items():
         for job_name, job in (caller.get("jobs") or {}).items():
