@@ -54,11 +54,6 @@ on:
         required: false
         type: boolean
         default: true
-      use_zram:
-        description: "启用 ZRAM 压缩算法"
-        required: true
-        type: boolean
-        default: true
       use_bbg:
         description: "启用 BBG 基带保护"
         required: true
@@ -125,7 +120,9 @@ jobs:
       build_channel: ${{ inputs.build_channel }}
       ksu_mode: ${{ inputs.ksu_mode }}
       use_nomount: ${{ inputs.use_nomount || false }}
-      use_zram: ${{ inputs.use_zram }}
+      # OS4.0.8.0 vendor zsmalloc/node_cache use a different zs_malloc ABI.
+      # Keep the stock vendor modules instead of shipping ACK replacements.
+      use_zram: false
       use_bbg: ${{ inputs.use_bbg }}
       use_net_enhance: ${{ inputs.use_net_enhance }}
       use_rekernel: ${{ inputs.use_rekernel }}
@@ -157,7 +154,7 @@ jobs:
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       gki_commit: ${{ inputs.gki_commit }}
-      use_zram: ${{ inputs.use_zram }}
+      use_zram: false
       use_bbg: ${{ inputs.use_bbg }}
       use_net_enhance: ${{ inputs.use_net_enhance }}
       use_kpm: ${{ inputs.use_kpm || false }}
