@@ -70,10 +70,10 @@ on:
         type: boolean
         default: true
       use_nomount:
-        description: "启用 NoMount"
+        description: "启用 NoMount 挂载元模块（另附配套模块）"
         required: false
         type: boolean
-        default: false
+        default: true
       cve_2026_43499_patch:
         description: "应用 CVE-2026-43499"
         required: false
