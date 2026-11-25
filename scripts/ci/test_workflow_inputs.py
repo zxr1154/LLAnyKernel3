@@ -166,6 +166,11 @@ def main():
         errors.append("SUSFS-enabled SukiSU-Nova branch is not builtin-new")
     if 'BRANCH="builtin"' in build_text:
         errors.append("SUSFS-enabled path still assigns BRANCH=builtin")
+    release_text = (WORKFLOWS / "main.yml").read_text(encoding="utf-8")
+    if 'BRANCH="builtin-new"' not in release_text:
+        errors.append("release notes still do not record builtin-new")
+    if 'BRANCH="builtin"' in release_text:
+        errors.append("release notes still assign BRANCH=builtin")
     if '[ "$BRANCH" != "builtin-new" ]' not in build_text:
         errors.append("version alignment does not treat builtin-new as alignable")
     if not build_passed or build_passed[0].get("preserve_songyuan_modules") is not True:

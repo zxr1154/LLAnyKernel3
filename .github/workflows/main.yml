@@ -671,7 +671,8 @@ jobs:
           case "${{ inputs.kernelsu_variant }}" in
             "SukiSU-Nova")
               if [ "${{ inputs.ksu_mode }}" = "关闭" ]; then
-                BRANCH="builtin"
+                # 与 build.yml 一致：SUSFS 开启时内核来自 builtin-new。
+                BRANCH="builtin-new"
               else
                 BRANCH="main"
               fi
