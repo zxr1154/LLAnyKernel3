@@ -153,6 +153,21 @@ def main():
         build_passed.append(passed)
     if not build_passed or "gki_commit" not in build_passed[0]:
         errors.append("device workflow does not route gki_commit into build.yml")
+    if build_passed and build_passed[0].get("use_zram") is not False:
+        errors.append("songyuan workflow must keep use_zram false")
+    if build_passed and build_passed[0].get("preserve_songyuan_modules") is not True:
+        errors.append("songyuan workflow must keep preserve_songyuan_modules true")
+    nomount = device["on"]["workflow_dispatch"]["inputs"]["use_nomount"]
+    if nomount.get("default") is not True:
+        errors.append("songyuan use_nomount default must stay true")
+
+    build_text = (WORKFLOWS / "build.yml").read_text(encoding="utf-8")
+    if 'BRANCH="builtin-new"' not in build_text:
+        errors.append("SUSFS-enabled SukiSU-Nova branch is not builtin-new")
+    if 'BRANCH="builtin"' in build_text:
+        errors.append("SUSFS-enabled path still assigns BRANCH=builtin")
+    if '[ "$BRANCH" != "builtin-new" ]' not in build_text:
+        errors.append("version alignment does not treat builtin-new as alignable")
     if not build_passed or build_passed[0].get("preserve_songyuan_modules") is not True:
         errors.append("device workflow must preserve the stock netfs and ZRAM modules")
     pinned = build_passed[0].get("android_version"), build_passed[0].get("kernel_version"), build_passed[0].get("sub_level"), build_passed[0].get("os_patch_level")
