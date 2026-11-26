@@ -132,12 +132,21 @@ def main():
     verify_head(nova, NOVA)
     selinuxfs = common / "security/selinux/selinuxfs.c"
     ksu = nova / "kernel/ksu.c"
+    boot_events = nova / "kernel/runtime/boot_event.c"
 
-    # Validate both source transformations before changing either file.
+    # Validate every source transformation before writing the modified files.
     annotated = prepare_selinuxfs(selinuxfs.read_text(encoding="utf-8"))
     unmodified_responses = prepare_nova(ksu.read_text(encoding="utf-8"))
+    native_audit = replace_once(
+        boot_events.read_text(encoding="utf-8"),
+        "\t// SELinux policy is fully loaded by now; resolve SIDs and arm the probe\n"
+        "\tksu_avc_spoof_late_init();\n",
+        "",
+        "boot-completed AVC alteration initializer",
+    )
     selinuxfs.write_text(annotated, encoding="utf-8")
     ksu.write_text(unmodified_responses, encoding="utf-8")
+    boot_events.write_text(native_audit, encoding="utf-8")
     print(f"SELinux diagnostics prepared from ACK {ACK} and Nova {NOVA}")
     print("SELinux response and AVC alteration initializers omitted; read-only diagnostics added")
 

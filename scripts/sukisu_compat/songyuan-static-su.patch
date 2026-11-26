@@ -1,0 +1,71 @@
+diff --git a/fs/exec.c b/fs/exec.c
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1932,6 +1932,11 @@
+ 	return retval;
+ }
+ 
++#ifdef CONFIG_KSU
++extern int ksu_handle_execveat(int *fd, struct filename **filename, void *argv,
++			      void *envp, int *flags);
++#endif
++
+ static int do_execveat_common(int fd, struct filename *filename,
+ 			      struct user_arg_ptr argv,
+ 			      struct user_arg_ptr envp,
+@@ -1954,6 +1959,12 @@
+ 		retval = -EAGAIN;
+ 		goto out_ret;
+ 	}
++
++#ifdef CONFIG_KSU
++	/* The upstream callback retains Nova's per-app root authorization. */
++	if (filename && !strcmp(filename->name, "/system/bin/su"))
++		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
++#endif
+ 
+ 	/* We're below the limit (still or again), so we don't want to make
+ 	 * further execve() calls fail. */
+diff --git a/fs/open.c b/fs/open.c
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -537,8 +537,16 @@
+ 	return res;
+ }
+ 
++#ifdef CONFIG_KSU
++extern int ksu_handle_faccessat(int *dfd, const char __user **filename,
++			       int *mode, int *flags);
++#endif
++
+ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
+ {
++#ifdef CONFIG_KSU
++	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
++#endif
+ 	return do_faccessat(dfd, filename, mode, 0);
+ }
+ 
+diff --git a/fs/stat.c b/fs/stat.c
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -496,11 +496,19 @@
+ }
+ 
+ #if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
++#ifdef CONFIG_KSU
++extern int ksu_handle_stat(int *dfd, const char __user **filename, int *flags);
++#endif
++
+ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+ 		struct stat __user *, statbuf, int, flag)
+ {
+ 	struct kstat stat;
+ 	int error;
++
++#ifdef CONFIG_KSU
++	ksu_handle_stat(&dfd, &filename, &flag);
++#endif
+ 
+ 	error = vfs_fstatat(dfd, filename, &stat, flag);
+ 	if (error)

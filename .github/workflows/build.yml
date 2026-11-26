@@ -784,7 +784,13 @@ jobs:
       - name: 准备 SELinux 只读诊断
         if: inputs.ksu_variant == 'SukiSU-Nova' && inputs.ksu_mode != '禁用KSU'
         working-directory: ${{ env.KERNEL_ROOT }}
-        run: python3 "$GITHUB_WORKSPACE/scripts/sukisu_compat/prepare_selinux_diagnostics.py" common KernelSU
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/scripts/sukisu_compat/prepare_selinux_diagnostics.py" common KernelSU
+          static_su_patch="$GITHUB_WORKSPACE/scripts/sukisu_compat/songyuan-static-su.patch"
+          git -C common apply --check "$static_su_patch"
+          git -C common apply "$static_su_patch"
+          echo "songyuan: compile-time Nova su integration applied"
 
       - name: 应用 SUSFS 补丁
         if: inputs.enable_susfs && env.SUSFS_SKIPPED != 'true'
@@ -1671,6 +1677,12 @@ jobs:
             if grep -qsE '^[[:space:]]*config[[:space:]]+KSU_SUSFS([[:space:]]|$)' KernelSU/kernel/Kconfig; then
               echo "# CONFIG_KSU_SUSFS is not set" >> "$DEFCONFIG"
             fi
+            cat >> "$DEFCONFIG" <<'EOF'
+          # CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set
+          # CONFIG_KSU_HACK_ARM64_BRANCH_LINK is not set
+          # CONFIG_KSU_SHELL_HAS_SU_ALWAYS is not set
+          CONFIG_KSU_ENABLE_FULL_UID_CHECKS=y
+          EOF
           fi
 
           # BakaSU 上游改名后 Kconfig 默认值去掉了 @%REPO_NAME%，显式加回模板，
@@ -1982,10 +1994,16 @@ jobs:
           trap 'rm -f "$final_config"' EXIT
           common/scripts/extract-ikconfig bazel-bin/common/kernel_aarch64/Image > "$final_config"
           if [ "${{ inputs.ksu_variant }}" = "SukiSU-Nova" ] && [ "${{ inputs.ksu_mode }}" != "禁用KSU" ]; then
-            if grep -Eq '^CONFIG_KSU_SUSFS=[ym]$' "$final_config"; then
-              echo "::error::SELinux 诊断版 Image 启用了 SUSFS"
+            if grep -Eq '^CONFIG_KSU_(SUSFS|TAMPER_SYSCALL_TABLE|HACK_ARM64_BRANCH_LINK|SHELL_HAS_SU_ALWAYS)=[ym]$' "$final_config"; then
+              echo "::error::诊断版启用了 SUSFS、动态 su 后端或无条件 shell root"
               exit 1
             fi
+            for expected in CONFIG_KSU=y CONFIG_KSU_ENABLE_FULL_UID_CHECKS=y; do
+              grep -Fxq "$expected" "$final_config" || {
+                echo "::error::最终 Image 未保留 $expected"
+                exit 1
+              }
+            done
             for marker in "selinux-diag access" "selinux-diag status"; do
               grep -aFq "$marker" bazel-bin/common/kernel_aarch64/Image || {
                 echo "::error::最终 Image 缺少 $marker"
