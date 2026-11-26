@@ -1671,6 +1671,12 @@ jobs:
             if grep -qsE '^[[:space:]]*config[[:space:]]+KSU_SUSFS([[:space:]]|$)' KernelSU/kernel/Kconfig; then
               echo "# CONFIG_KSU_SUSFS is not set" >> "$DEFCONFIG"
             fi
+            # No SUSFS inline integration is present in the diagnostic build.
+            grep -qsE '^[[:space:]]*config[[:space:]]+KSU_TAMPER_SYSCALL_TABLE([[:space:]]|$)' KernelSU/kernel/Kconfig || {
+              echo "::error::固定 Nova 源码缺少 ARM64 su 执行后端"
+              exit 1
+            }
+            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> "$DEFCONFIG"
           fi
 
           # BakaSU 上游改名后 Kconfig 默认值去掉了 @%REPO_NAME%，显式加回模板，
@@ -1986,6 +1992,10 @@ jobs:
               echo "::error::SELinux 诊断版 Image 启用了 SUSFS"
               exit 1
             fi
+            grep -Fxq CONFIG_KSU_TAMPER_SYSCALL_TABLE=y "$final_config" || {
+              echo "::error::无 SUSFS 诊断版 Image 缺少 su 执行后端"
+              exit 1
+            }
             for marker in "selinux-diag access" "selinux-diag status"; do
               grep -aFq "$marker" bazel-bin/common/kernel_aarch64/Image || {
                 echo "::error::最终 Image 缺少 $marker"
