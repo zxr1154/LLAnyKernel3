@@ -173,6 +173,10 @@ def main():
         errors.append("release notes still assign BRANCH=builtin")
     if '[ "$BRANCH" != "builtin-new" ]' not in build_text:
         errors.append("version alignment does not treat builtin-new as alignable")
+    if "scripts/sukisu_compat/restore_ksu_debuginfo.py" not in build_text:
+        errors.append("SukiSU build does not restore ksu.o DWARF for gendwarfksyms")
+    if "CONFIG_KSU_DEBUG=y" in build_text:
+        errors.append("SukiSU build enables CONFIG_KSU_DEBUG instead of keeping DWARF")
     if not build_passed or build_passed[0].get("preserve_songyuan_modules") is not True:
         errors.append("device workflow must preserve the stock netfs and ZRAM modules")
     pinned = build_passed[0].get("android_version"), build_passed[0].get("kernel_version"), build_passed[0].get("sub_level"), build_passed[0].get("os_patch_level")
