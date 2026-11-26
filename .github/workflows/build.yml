@@ -713,6 +713,17 @@ jobs:
             echo "KSU_LATEST_COMMIT_DATE=未知" >> $GITHUB_ENV
           fi
 
+      # builtin-new 在 CONFIG_KSU_DEBUG 关闭时给 CFLAGS_ksu.o 追加 -g0。
+      # 该变量排在 KBUILD_CFLAGS 之后，会盖掉 GKI 的 -g/-gdwarf-*。
+      # 6.12 CONFIG_MODVERSIONS 用 gendwarfksyms 读取 ksu.o 的 DWARF，
+      # 否则 drivers/kernelsu/ksu.o 报 dwarf_get_units failed: no debugging information?
+      # 不打开 CONFIG_KSU_DEBUG：那还会恢复日志、追踪和栈保护。
+      # 脚本只删除 -g0，保留 -fno-unwind-tables 等其余裁剪选项。
+      - name: 保留 ksu.o 的 DWARF（gendwarfksyms）
+        if: inputs.ksu_variant == 'SukiSU-Nova' && inputs.ksu_mode != '禁用KSU'
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/sukisu_compat/restore_ksu_debuginfo.py" KernelSU
+
       - name: 计算 AnyKernel3 命名版本
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
