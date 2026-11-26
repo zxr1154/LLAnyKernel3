@@ -520,13 +520,11 @@ jobs:
               BRANCH="-s master"
               ;;
             "SukiSU-Nova")
-              if [ "${{ inputs.enable_susfs }}" = "false" ]; then
-                BRANCH="main"
-              else
-                # builtin 没有 kernel/feature/avc_spoof.c。SUSFS 开启时用
-                # builtin-new，ksu.c 会编入 avc_spoof.c 和 selinux_hide_arm64.c。
-                BRANCH="builtin-new"
+              if [ "${{ inputs.enable_susfs }}" != "false" ]; then
+                echo "::error::SELinux 诊断版要求禁用 SUSFS"
+                exit 1
               fi
+              BRANCH="builtin-new"
               ;;
             *)
               echo "未知变体: $variant_input" >&2
@@ -562,6 +560,12 @@ jobs:
             "SukiSU-Nova")
               echo "添加 ${{ inputs.ksu_variant }}..."
               curl -LSs "https://git.zako.shirkneko.top:20004/shirkneko/SukiSU/raw/branch/main/kernel/setup.sh" | bash -s -- "$BRANCH"
+              DIAGNOSTIC_NOVA="d8aafb76eeef070dad2dc39161ddf922545fce90"
+              if ! git -C KernelSU cat-file -e "$DIAGNOSTIC_NOVA^{commit}" 2>/dev/null; then
+                git -C KernelSU fetch origin "$DIAGNOSTIC_NOVA"
+              fi
+              git -C KernelSU checkout --detach "$DIAGNOSTIC_NOVA"
+              test "$(git -C KernelSU rev-parse HEAD)" = "$DIAGNOSTIC_NOVA"
               # 内核侧 KSU 版本来源对齐官方最新上传 Manager 构建：
               # SukiSU-Nova 版本号 = 30000 + main 提交数 + 996
               #（main 分支定义在 kernel/Kbuild；builtin 分支仍使用旧版公式）。
@@ -776,6 +780,11 @@ jobs:
         if: inputs.ksu_variant == 'SukiSU-Nova' && inputs.ksu_mode != '禁用KSU'
         working-directory: ${{ env.KERNEL_ROOT }}
         run: bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+
+      - name: 准备 SELinux 只读诊断
+        if: inputs.ksu_variant == 'SukiSU-Nova' && inputs.ksu_mode != '禁用KSU'
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/sukisu_compat/prepare_selinux_diagnostics.py" common KernelSU
 
       - name: 应用 SUSFS 补丁
         if: inputs.enable_susfs && env.SUSFS_SKIPPED != 'true'
@@ -1972,6 +1981,18 @@ jobs:
           final_config="$(mktemp)"
           trap 'rm -f "$final_config"' EXIT
           common/scripts/extract-ikconfig bazel-bin/common/kernel_aarch64/Image > "$final_config"
+          if [ "${{ inputs.ksu_variant }}" = "SukiSU-Nova" ] && [ "${{ inputs.ksu_mode }}" != "禁用KSU" ]; then
+            if grep -Eq '^CONFIG_KSU_SUSFS=[ym]$' "$final_config"; then
+              echo "::error::SELinux 诊断版 Image 启用了 SUSFS"
+              exit 1
+            fi
+            for marker in "selinux-diag access" "selinux-diag status"; do
+              grep -aFq "$marker" bazel-bin/common/kernel_aarch64/Image || {
+                echo "::error::最终 Image 缺少 $marker"
+                exit 1
+              }
+            done
+          fi
           for expected in CONFIG_NETFS_SUPPORT=m CONFIG_ZRAM=m CONFIG_ZSMALLOC=m; do
             grep -Fxq "$expected" "$final_config" || {
               echo "::error::最终 Image 未保留 $expected"
